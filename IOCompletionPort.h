@@ -6,39 +6,6 @@
 #include <thread>
 #include <vector>
 
-#define MAX_SOCKBUF 1024	// 패킷 크기
-#define MAX_WORKER_THREAD 4 // 쓰레드풀에 넣을 쓰레드 수
-
-enum class IOOperation
-{
-	RECV,
-	SEND
-};
-
-// WSAOVERLAPPED 구조체를 확장시켜서 필요한 정보를 더 넣었다.
-struct OverlappedEx
-{
-	WSAOVERLAPPED WsaOverlapped;		// Overlapped I/O 구조체
-	SOCKET SocketClient;				// 클라이언트 소켓
-	WSABUF WsaBuf;						// Overlapped I/O 작업 버퍼
-	char DataBuffer[MAX_SOCKBUF];			// 데이터 버퍼
-	IOOperation Operation;				// 작업 동작 종류
-};
-
-struct ClientInfo
-{
-	SOCKET SocketClient;				// Client와 연결되는 소켓
-	OverlappedEx RecvOverlappedEx;		// RECV Overlapped I/O 작업을 위한 변수
-	OverlappedEx SendOverlappedEx;		// SEND Overlapped I/O 작업을 위한 변수
-
-	ClientInfo()
-	{
-		ZeroMemory(&RecvOverlappedEx, sizeof(RecvOverlappedEx));
-		ZeroMemory(&SendOverlappedEx, sizeof(SendOverlappedEx));
-		SocketClient = INVALID_SOCKET;
-	}
-};
-
 class IOCompletionPort
 {
 public:
@@ -210,7 +177,7 @@ private:
 		DWORD RecvNumBytes = 0;
 
 		Info->RecvOverlappedEx.WsaBuf.len = MAX_SOCKBUF;
-		Info->RecvOverlappedEx.WsaBuf.buf = Info->RecvOverlappedEx.DataBuffer;
+		Info->RecvOverlappedEx.WsaBuf.buf = Info->RecvBuf;
 		Info->RecvOverlappedEx.Operation = IOOperation::RECV;
 
 		int Ret = WSARecv(Info->SocketClient,
@@ -233,10 +200,10 @@ private:
 	{
 		DWORD RecvNumBytes = 0;
 
-		CopyMemory(Info->SendOverlappedEx.DataBuffer, Msg, Len);
+		CopyMemory(Info->SendBuf, Msg, Len);
 
 		Info->SendOverlappedEx.WsaBuf.len = Len;
-		Info->SendOverlappedEx.WsaBuf.buf = Info->SendOverlappedEx.DataBuffer;
+		Info->SendOverlappedEx.WsaBuf.buf = Info->SendBuf;
 		Info->SendOverlappedEx.Operation = IOOperation::SEND;
 
 		int Ret = WSASend(Info->SocketClient,
@@ -289,16 +256,16 @@ private:
 			OverlappedEx* ov = (OverlappedEx*)Overlapped;
 			if(IOOperation::RECV == ov->Operation)
 			{
-				ov->DataBuffer[IoSize] = NULL;
-				printf("[수신] bytes: %d, msg: %s\n", IoSize, ov->DataBuffer);
+				Info->RecvBuf[IoSize] = NULL;
+				printf("[수신] bytes: %d, msg: %s\n", IoSize, Info->RecvBuf);
 
 				// 클라이언트에 메세지 echo
-				SendMsg(Info, ov->DataBuffer, IoSize);
+				SendMsg(Info, Info->RecvBuf, IoSize);
 				BindRecv(Info);
 			}
 			else if(IOOperation::SEND == ov->Operation)
 			{
-				printf("[송신] bytes: %d, msg: %s\n", IoSize, ov->DataBuffer);
+				printf("[송신] bytes: %d, msg: %s\n", IoSize, Info->SendBuf);
 			}
 			else
 			{
