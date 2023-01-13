@@ -1,23 +1,33 @@
-#include "IOCompletionPort.h"
+#include "EchoServer.h"
+#include <string>
+#include <iostream>
 
 const UINT16 SERVER_PORT = 11021;
 const UINT16 MAX_CLIENT = 100;		//총 접속할수 있는 클라이언트 수
 
 int main()
 {
-	IOCompletionPort ioCompletionPort;
+	EchoServer Server;
 
 	//소켓을 초기화
-	ioCompletionPort.InitSocket();
+	Server.InitSocket();
 
 	//소켓과 서버 주소를 연결하고 등록 시킨다.
-	ioCompletionPort.BindAndListen(SERVER_PORT);
+	Server.BindAndListen(SERVER_PORT);
 
-	ioCompletionPort.StartServer(MAX_CLIENT);
+	Server.StartServer(MAX_CLIENT);
 
-	printf("아무 키나 누를 때까지 대기합니다\n");
-	getchar();
+	printf("종료하려면 [quit]를 입력하세요.\n");
+	while(true)
+	{
+		std::string InputCmd;
+		std::getline(std::cin, InputCmd);
+		if(InputCmd == "quit")
+		{
+			break;
+		}
+	}
 
-	ioCompletionPort.DestroyThread();
+	Server.DestroyThread();
 	return 0;
 }

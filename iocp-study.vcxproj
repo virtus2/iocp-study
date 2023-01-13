@@ -128,7 +128,8 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="Define.h" />
-    <ClInclude Include="IOCompletionPort.h" />
+    <ClInclude Include="EchoServer.h" />
+    <ClInclude Include="IOCPServer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />

@@ -5,11 +5,11 @@
 #include <thread>
 #include <vector>
 
-class IOCompletionPort
+class IOCPServer
 {
 public:
-	IOCompletionPort() {}
-	~IOCompletionPort()
+	IOCPServer() {}
+	virtual ~IOCPServer()
 	{
 		WSACleanup();
 	}
@@ -117,6 +117,10 @@ public:
 		}
 	}
 
+	// 네트워크 이벤트를 처리할 함수들
+	virtual void OnConnect(const UINT32 ClientIndex) {}
+	virtual void OnClose(const UINT32 ClientIndex) {}
+	virtual void OnReceive(const UINT32 ClientIndex, const UINT32 Size, char* Data) {}
 
 private:
 	void CreateClient(const UINT32 maxClientCount)
@@ -200,6 +204,7 @@ private:
 		DWORD RecvNumBytes = 0;
 
 		CopyMemory(Info->SendBuf, Msg, Len);
+		Info->SendBuf[Len] = '\0';
 
 		Info->SendOverlappedEx.WsaBuf.len = Len;
 		Info->SendOverlappedEx.WsaBuf.buf = Info->SendBuf;
@@ -247,7 +252,6 @@ private:
 			}
 			if(FALSE == Success || (0 == IoSize && TRUE == Success))
 			{
-				printf("socket(%d) 접속 끊김\n", (int)Info->SocketClient);
 				CloseSocket(Info);
 				continue;
 			}
@@ -255,9 +259,8 @@ private:
 			OverlappedEx* ov = (OverlappedEx*)Overlapped;
 			if(IOOperation::RECV == ov->Operation)
 			{
-				Info->RecvBuf[IoSize] = NULL;
-				printf("[수신] bytes: %d, msg: %s\n", IoSize, Info->RecvBuf);
-
+				OnReceive(Info->Index, IoSize, Info->RecvBuf);
+				
 				// 클라이언트에 메세지 echo
 				SendMsg(Info, Info->RecvBuf, IoSize);
 				BindRecv(Info);
@@ -305,9 +308,8 @@ private:
 				return;
 			}
 
-			char clientIP[32] = { 0, };
-			inet_ntop(AF_INET, &(ClientAddr.sin_addr), clientIP, 32 - 1);
-			printf("클라이언트 접속: IP(%s) SOCKET(%d)\n", clientIP, (int)Info->SocketClient);
+			Info->Index = ClientCount;
+			OnConnect(Info->Index);
 
 			++ClientCount;
 		}
@@ -329,6 +331,9 @@ private:
 		closesocket(Info->SocketClient);
 
 		Info->SocketClient = INVALID_SOCKET;
+
+		OnClose(Info->Index);
+		--ClientCount;
 	}
 	// 클라이언트 정보
 	std::vector<ClientInfo> ClientInfos;

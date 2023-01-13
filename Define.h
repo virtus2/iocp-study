@@ -3,7 +3,7 @@
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 
-#define MAX_SOCKBUF 1024	// 패킷 크기
+#define MAX_SOCKBUF 256	// 패킷 크기
 #define MAX_WORKER_THREAD 4 // 쓰레드풀에 넣을 쓰레드 수
 
 enum class IOOperation
@@ -23,6 +23,7 @@ struct OverlappedEx
 
 struct ClientInfo
 {
+	INT32 Index = 0;
 	SOCKET SocketClient;				// Client와 연결되는 소켓
 	OverlappedEx RecvOverlappedEx;		// RECV Overlapped I/O 작업을 위한 변수
 	OverlappedEx SendOverlappedEx;		// SEND Overlapped I/O 작업을 위한 변수

@@ -15,10 +15,13 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="IOCompletionPort.h">
+    <ClInclude Include="IOCPServer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Define.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EchoServer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
