@@ -15,7 +15,7 @@ int main()
 	//소켓과 서버 주소를 연결하고 등록 시킨다.
 	Server.BindAndListen(SERVER_PORT);
 
-	Server.StartServer(MAX_CLIENT);
+	Server.Run(MAX_CLIENT);
 
 	printf("종료하려면 [quit]를 입력하세요.\n");
 	while(true)
@@ -28,6 +28,6 @@ int main()
 		}
 	}
 
-	Server.DestroyThread();
+	Server.End();
 	return 0;
 }

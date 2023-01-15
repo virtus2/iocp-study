@@ -1,7 +1,9 @@
 #pragma once
 #pragma comment(lib, "ws2_32")
 
+#include "ClientInfo.h"
 #include "Define.h"
+
 #include <thread>
 #include <vector>
 
@@ -117,6 +119,12 @@ public:
 		}
 	}
 
+	bool SendMsg(const UINT32 SessionIndex, const UINT32 DataSize, char* Data)
+	{
+		auto Client = GetClientInfo(SessionIndex);
+		return Client->SendMsg(DataSize, Data);
+	}
+
 	// 네트워크 이벤트를 처리할 함수들
 	virtual void OnConnect(const UINT32 ClientIndex) {}
 	virtual void OnClose(const UINT32 ClientIndex) {}
@@ -128,6 +136,7 @@ private:
 		for(UINT32 i = 0; i<maxClientCount; ++i)
 		{
 			ClientInfos.emplace_back();
+			ClientInfos[i].Init(i);
 		}
 	}
 
@@ -155,7 +164,7 @@ private:
 	{
 		for(auto& client : ClientInfos)
 		{
-			if(INVALID_SOCKET == client.SocketClient)
+			if(!client.IsConnected())
 			{
 				return &client;
 			}
@@ -163,67 +172,9 @@ private:
 		return nullptr;
 	}
 
-	bool bindIOCompletionPort(ClientInfo* Info)
+	ClientInfo* GetClientInfo(const UINT32 SessionIndex)
 	{
-		auto hIOCP = CreateIoCompletionPort((HANDLE)Info->SocketClient, IOCPHandle, (ULONG_PTR)(Info), 0);
-		if(NULL == hIOCP || IOCPHandle != hIOCP)
-		{
-			printf("[에러] CreateIoCompletionPort() 함수 실패: %d\n", WSAGetLastError());
-			return false;
-		}
-		return true;
-	}
-
-	bool BindRecv(ClientInfo* Info)
-	{
-		DWORD Flag = 0;
-		DWORD RecvNumBytes = 0;
-
-		Info->RecvOverlappedEx.WsaBuf.len = MAX_SOCKBUF;
-		Info->RecvOverlappedEx.WsaBuf.buf = Info->RecvBuf;
-		Info->RecvOverlappedEx.Operation = IOOperation::RECV;
-
-		int Ret = WSARecv(Info->SocketClient,
-			&(Info->RecvOverlappedEx.WsaBuf),
-			1,
-			&RecvNumBytes,
-			&Flag,
-			(LPWSAOVERLAPPED) & (Info->RecvOverlappedEx),
-			NULL);
-
-		if(SOCKET_ERROR == Ret && (WSAGetLastError() != ERROR_IO_PENDING))
-		{
-			printf("[에러] WSARecv()함수 실패: %d\n", WSAGetLastError());
-			return false;
-		}
-		return true;
-	}
-
-	bool SendMsg(ClientInfo* Info, char* Msg, int Len)
-	{
-		DWORD RecvNumBytes = 0;
-
-		CopyMemory(Info->SendBuf, Msg, Len);
-		Info->SendBuf[Len] = '\0';
-
-		Info->SendOverlappedEx.WsaBuf.len = Len;
-		Info->SendOverlappedEx.WsaBuf.buf = Info->SendBuf;
-		Info->SendOverlappedEx.Operation = IOOperation::SEND;
-
-		int Ret = WSASend(Info->SocketClient,
-			&(Info->SendOverlappedEx.WsaBuf),
-			1,
-			&RecvNumBytes,
-			0,
-			(LPWSAOVERLAPPED) & (Info->SendOverlappedEx),
-			NULL);
-
-		if(SOCKET_ERROR == Ret && (WSAGetLastError() != ERROR_IO_PENDING))
-		{
-			printf("[에러] WSASend()함수 실패: %d\n", WSAGetLastError());
-			return false;
-		}
-		return true;
+		return &ClientInfos[SessionIndex];
 	}
 
 	void IOWorker()
@@ -259,19 +210,19 @@ private:
 			OverlappedEx* ov = (OverlappedEx*)Overlapped;
 			if(IOOperation::RECV == ov->Operation)
 			{
-				OnReceive(Info->Index, IoSize, Info->RecvBuf);
-				
-				// 클라이언트에 메세지 echo
-				SendMsg(Info, Info->RecvBuf, IoSize);
-				BindRecv(Info);
+				OnReceive(Info->GetIndex(), IoSize, Info->GetRecvBuffer());
+
+				Info->BindRecv();
 			}
 			else if(IOOperation::SEND == ov->Operation)
 			{
-				printf("[송신] bytes: %d, msg: %s\n", IoSize, Info->SendBuf);
+				delete[] ov->WsaBuf.buf;
+				delete ov;
+				Info->SendCompleted(IoSize);
 			}
 			else
 			{
-				printf("socket(%d)에서 예외상황\n", (int)Info->SocketClient);
+				printf("socket(%d)에서 예외상황\n", (int)Info->GetIndex());
 			}
 		}
 	}
@@ -290,26 +241,19 @@ private:
 				return;
 			}
 
-			Info->SocketClient = accept(ListenSocket, (SOCKADDR*)&ClientAddr, &AddrLen);
-			if(INVALID_SOCKET == Info->SocketClient)
+			auto NewSocket = accept(ListenSocket, (SOCKADDR*)&ClientAddr, &AddrLen);
+			if(INVALID_SOCKET == NewSocket)
 			{
 				continue;
 			}
 
-			bool Ret = bindIOCompletionPort(Info);
-			if(false == Ret)
+			if(!Info->OnConnect(IOCPHandle, NewSocket))
 			{
+				Info->Close(true);
 				return;
 			}
 
-			Ret = BindRecv(Info);
-			if(false == Ret)
-			{
-				return;
-			}
-
-			Info->Index = ClientCount;
-			OnConnect(Info->Index);
+			OnConnect(Info->GetIndex());
 
 			++ClientCount;
 		}
@@ -317,23 +261,9 @@ private:
 
 	void CloseSocket(ClientInfo* Info, bool Force = false)
 	{
-		struct linger Linger = { 0,0 };
-
-		if(true == Force)
-		{
-			Linger.l_onoff = 1;
-		}
-
-		shutdown(Info->SocketClient, SD_BOTH);
-
-		setsockopt(Info->SocketClient, SOL_SOCKET, SO_LINGER, (char*)&Linger, sizeof(Linger));
-
-		closesocket(Info->SocketClient);
-
-		Info->SocketClient = INVALID_SOCKET;
-
-		OnClose(Info->Index);
-		--ClientCount;
+		auto ClientIndex = Info->GetIndex();
+		Info->Close(Force);
+		OnClose(ClientIndex);
 	}
 	// 클라이언트 정보
 	std::vector<ClientInfo> ClientInfos;

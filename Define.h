@@ -21,20 +21,3 @@ struct OverlappedEx
 	IOOperation Operation;				// 작업 동작 종류
 };
 
-struct ClientInfo
-{
-	INT32 Index = 0;
-	SOCKET SocketClient;				// Client와 연결되는 소켓
-	OverlappedEx RecvOverlappedEx;		// RECV Overlapped I/O 작업을 위한 변수
-	OverlappedEx SendOverlappedEx;		// SEND Overlapped I/O 작업을 위한 변수
-
-	char RecvBuf[MAX_SOCKBUF];			// 수신 데이터 버퍼
-	char SendBuf[MAX_SOCKBUF];			// 송신 데이터 버퍼
-
-	ClientInfo()
-	{
-		ZeroMemory(&RecvOverlappedEx, sizeof(RecvOverlappedEx));
-		ZeroMemory(&SendOverlappedEx, sizeof(SendOverlappedEx));
-		SocketClient = INVALID_SOCKET;
-	}
-};
