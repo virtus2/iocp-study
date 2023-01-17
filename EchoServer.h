@@ -24,7 +24,7 @@ public:
 	}
 	virtual void OnReceive(const UINT32 ClientIndex, const UINT32 Size, char* Data) override
 	{
-		printf("[OnReceive] 클라이언트 수신: Index %d, Size: %d, Data: %s\n", ClientIndex, Size, Data);
+		printf("[OnReceive] 클라이언트 수신: Index %d, Size: %d\n", ClientIndex, Size);
 
 		PacketData Packet;
 		Packet.Set(ClientIndex, Size, Data);

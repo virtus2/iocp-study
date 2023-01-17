@@ -93,15 +93,23 @@ public:
 		{
 			return false;
 		}
+
+		CreateSenderThread();
+
 		printf("서버 시작\n");
 		return true;
 	}
 	
 	void DestroyThread()
 	{
+		IsSenderRunning = false;
+		if(SenderThread.joinable())
+		{
+			SenderThread.join();
+		}
+
 		IsWorkerRunning = false;
 		CloseHandle(IOCPHandle);
-
 		for(auto& th : IOWorkerThreads)
 		{
 			if(th.joinable())
@@ -113,7 +121,7 @@ public:
 		// Acceptor 쓰레드 종료
 		IsAcceptorRunning = false;
 		closesocket(ListenSocket);
-		if(AcceptorThread.joinable())
+		if (AcceptorThread.joinable())
 		{
 			AcceptorThread.join();
 		}
@@ -135,13 +143,15 @@ private:
 	{
 		for(UINT32 i = 0; i<maxClientCount; ++i)
 		{
-			ClientInfos.emplace_back();
-			ClientInfos[i].Init(i);
+			auto Client = new ClientInfo();
+			Client->Init(i);
+			ClientInfos.push_back(Client);
 		}
 	}
 
 	bool CreateWorkerThread()
 	{
+		IsWorkerRunning = true;
 		unsigned int ThreadId = 0;
 
 		for(int i=0; i< MAX_WORKER_THREAD; ++i)
@@ -154,19 +164,27 @@ private:
 
 	bool CreateAcceptorThread()
 	{
+		IsAcceptorRunning = true;
 		AcceptorThread = std::thread([this]() { Acceptor(); });
 
 		printf("AcceptorThread 시작\n");
 		return true;
 	}
 
+	void CreateSenderThread()
+	{
+		IsSenderRunning = true;
+		SenderThread = std::thread([this]() { Sender(); });
+		printf("SenderThread 시작\n");
+	}
+
 	ClientInfo* GetEmptyClientInfo()
 	{
-		for(auto& client : ClientInfos)
+		for(auto& Client : ClientInfos)
 		{
-			if(!client.IsConnected())
+			if(!Client->IsConnected())
 			{
-				return &client;
+				return Client;
 			}
 		}
 		return nullptr;
@@ -174,15 +192,23 @@ private:
 
 	ClientInfo* GetClientInfo(const UINT32 SessionIndex)
 	{
-		return &ClientInfos[SessionIndex];
+		return ClientInfos[SessionIndex];
 	}
 
+	void CloseSocket(ClientInfo* Info, bool Force = false)
+	{
+		auto ClientIndex = Info->GetIndex();
+		Info->Close(Force);
+		OnClose(ClientIndex);
+	}
+
+	// Overlapped I/O 작업에 대한 완료 통보를 받아 그에 해당하는 처리를 하는 함수
 	void IOWorker()
 	{
-		ClientInfo* Info = NULL;
-		BOOL Success = TRUE;
-		DWORD IoSize = 0;
-		LPOVERLAPPED Overlapped = NULL;
+		ClientInfo* Info = NULL; // CompletionKey를 받을 포인터 변수
+		BOOL Success = TRUE; 
+		DWORD IoSize = 0; // Overlapped I/O 작업에서 전송된 데이터 크기
+		LPOVERLAPPED Overlapped = NULL; // I/O 작업을 위해 요청한 Overlapped 구조체를 받을 포인터
 
 		while(IsWorkerRunning)
 		{
@@ -190,7 +216,7 @@ private:
 				&IoSize,					// 실제로 전송된 바이트
 				(PULONG_PTR)&Info,			// Completion Key
 				&Overlapped,				// Overlapped I/O 객체
-				INFINITE);		// 대기할 시간
+				INFINITE);					// 대기할 시간
 
 			if(TRUE == Success && 0 == IoSize && NULL == Overlapped)
 			{
@@ -210,19 +236,16 @@ private:
 			OverlappedEx* ov = (OverlappedEx*)Overlapped;
 			if(IOOperation::RECV == ov->Operation)
 			{
-				OnReceive(Info->GetIndex(), IoSize, Info->GetRecvBuffer());
-
-				Info->BindRecv();
+				if(Info->BindRecv())
+					OnReceive(Info->GetIndex(), IoSize, Info->GetRecvBuffer());
 			}
 			else if(IOOperation::SEND == ov->Operation)
 			{
-				delete[] ov->WsaBuf.buf;
-				delete ov;
 				Info->SendCompleted(IoSize);
 			}
 			else
 			{
-				printf("socket(%d)에서 예외상황\n", (int)Info->GetIndex());
+				printf("Client Info(Index:%d)에서 예외상황\n", (int)Info->GetIndex());
 			}
 		}
 	}
@@ -259,14 +282,24 @@ private:
 		}
 	}
 
-	void CloseSocket(ClientInfo* Info, bool Force = false)
+	void Sender()
 	{
-		auto ClientIndex = Info->GetIndex();
-		Info->Close(Force);
-		OnClose(ClientIndex);
+		while(IsSenderRunning)
+		{
+			for(auto& Client : ClientInfos)
+			{
+				if(!Client->IsConnected())
+				{
+					continue;
+				}
+				Client->SendIO();
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(8));
+		}
 	}
+
 	// 클라이언트 정보
-	std::vector<ClientInfo> ClientInfos;
+	std::vector<ClientInfo*> ClientInfos;
 
 	// 클라이언트 접속을 받기 위한 리슨 소켓
 	SOCKET ListenSocket = INVALID_SOCKET;
@@ -280,6 +313,9 @@ private:
 	// Accept 쓰레드
 	std::thread AcceptorThread;
 
+	// 송신 쓰레드
+	std::thread SenderThread;
+
 	// CompletionPort 객체 핸들
 	HANDLE IOCPHandle = INVALID_HANDLE_VALUE;
 
@@ -288,6 +324,9 @@ private:
 
 	// 접속 쓰레드 동작 플래그
 	bool IsAcceptorRunning = true;
+
+	// 송신 쓰레드 동작 플래그
+	bool IsSenderRunning = true;
 
 	// 소켓 버퍼
 	char SocketBuffer[1024] = { 0, };

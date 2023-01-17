@@ -3,6 +3,7 @@
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 
+#define MAX_SOCK_SENDBUF 4096
 #define MAX_SOCKBUF 256	// 패킷 크기
 #define MAX_WORKER_THREAD 4 // 쓰레드풀에 넣을 쓰레드 수
 
