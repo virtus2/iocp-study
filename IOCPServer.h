@@ -236,8 +236,9 @@ private:
 			OverlappedEx* ov = (OverlappedEx*)Overlapped;
 			if(IOOperation::RECV == ov->Operation)
 			{
-				if(Info->BindRecv())
-					OnReceive(Info->GetIndex(), IoSize, Info->GetRecvBuffer());
+				Info->BindRecv();
+
+				OnReceive(Info->GetIndex(), IoSize, Info->GetRecvBuffer());
 			}
 			else if(IOOperation::SEND == ov->Operation)
 			{

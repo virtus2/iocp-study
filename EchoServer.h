@@ -24,7 +24,16 @@ public:
 	}
 	virtual void OnReceive(const UINT32 ClientIndex, const UINT32 Size, char* Data) override
 	{
-		printf("[OnReceive] 클라이언트 수신: Index %d, Size: %d\n", ClientIndex, Size);
+		for(int i=0; i<Size; i++)
+		{
+			if (Data[i] <=  'a' || Data[i] >= 'z')
+			{
+				Data[i] = ' ';
+			}
+		}
+		Data[Size] = '\0';
+		std::string str(Data);
+		printf("[OnReceive] 클라이언트 수신: Index %d, Size: %d, Msg: %s\n", ClientIndex, Size, str.c_str());
 
 		PacketData Packet;
 		Packet.Set(ClientIndex, Size, Data);
