@@ -4,6 +4,7 @@
 
 #include "Define.h"
 #include <stdio.h>
+#include <queue>
 
 class ClientInfo
 {
@@ -11,7 +12,6 @@ public:
 	ClientInfo()
 	{
 		ZeroMemory(&RecvOverlappedEx, sizeof(RecvOverlappedEx)); 
-		ZeroMemory(&SendOverlappedEx, sizeof(SendOverlappedEx));
 		SocketClient = INVALID_SOCKET;
 	}
 
@@ -83,7 +83,7 @@ public:
 			1,
 			&RecvNumBytes,
 			&Flag,
-			(LPWSAOVERLAPPED) & (RecvOverlappedEx),
+			(LPWSAOVERLAPPED) &RecvOverlappedEx,
 			NULL);
 
 		if (Ret == SOCKET_ERROR && (WSAGetLastError() != ERROR_IO_PENDING))
@@ -96,41 +96,48 @@ public:
 
 	bool SendMsg(const UINT32 DataSize, char* Msg)
 	{
-		// 1개의 스레드에서만 호출해야한다.
+		auto sendOverlappedEx = new OverlappedEx;
+		ZeroMemory(sendOverlappedEx, sizeof(OverlappedEx));
+		sendOverlappedEx->WsaBuf.len = DataSize;
+		sendOverlappedEx->WsaBuf.buf = new char[DataSize];
+		CopyMemory(sendOverlappedEx->WsaBuf.buf, Msg, DataSize);
+		sendOverlappedEx->Operation = IOOperation::SEND;
+
 		std::lock_guard<std::mutex> guard(SendLock);
-		if((SendPos + DataSize) > MAX_SOCK_SENDBUF)
+		SendDataQueue.push(sendOverlappedEx);
+		if(SendDataQueue.size() == 1)
 		{
-			SendPos = 0;
+			SendIO();
 		}
-		auto Buf = &SendBuf[SendPos];
-
-		CopyMemory(Buf, Msg, DataSize);
-		SendPos += DataSize;
-
 		return true;
 	}
 
+	
+	void SendCompleted(const UINT32 DataSize)
+	{
+		printf("[송신 완료] bytes: %d\n", DataSize);
+		std::lock_guard<std::mutex> guard(SendLock);
+		delete[] SendDataQueue.front()->WsaBuf.buf;
+		delete SendDataQueue.front();
+		SendDataQueue.pop();
+		if(SendDataQueue.empty()==false)
+		{
+			SendIO();
+		}
+	}
+
+private:
 	bool SendIO()
 	{
-		if(SendPos <= 0 || Sending)
-		{
-			return true;
-		}
-		std::lock_guard<std::mutex> guard(SendLock);
-		Sending = true;
-		CopyMemory(SendingBuf, &SendBuf[0], SendPos);
+		auto SendOverlappedEx = SendDataQueue.front();
 		
-		SendOverlappedEx.WsaBuf.len = SendPos;
-		SendOverlappedEx.WsaBuf.buf = &SendingBuf[0];
-		SendOverlappedEx.Operation = IOOperation::SEND;
-
 		DWORD SendNumBytes = 0;
 		int Ret = WSASend(SocketClient,
-			&(SendOverlappedEx.WsaBuf),
+			&(SendOverlappedEx->WsaBuf),
 			1,
 			&SendNumBytes,
 			0,
-			(LPWSAOVERLAPPED)&SendOverlappedEx,
+			(LPWSAOVERLAPPED)SendOverlappedEx,
 			NULL);
 
 		if (Ret == SOCKET_ERROR && (WSAGetLastError() != ERROR_IO_PENDING))
@@ -138,17 +145,8 @@ public:
 			printf("[에러] WSASend()함수 실패: %d\n", WSAGetLastError());
 			return false;
 		}
-		SendPos = 0;
 		return true;
 	}
-
-	void SendCompleted(const UINT32 DataSize)
-	{
-		Sending = false;
-		printf("[송신 완료] bytes: %d\n", DataSize);
-	}
-
-private:
 
 	INT32 Index = 0;
 	SOCKET SocketClient;				// Client와 연결되는 소켓
@@ -156,7 +154,7 @@ private:
 	OverlappedEx RecvOverlappedEx;		// RECV Overlapped I/O 작업을 위한 변수
 	char RecvBuf[MAX_SOCKBUF];			// 데이터 버퍼
 
-	OverlappedEx SendOverlappedEx;		// SEND Overlapped I/O 작업을 위한 변수
+	std::queue<OverlappedEx*> SendDataQueue;
 	char SendBuf[MAX_SOCK_SENDBUF];
 	char SendingBuf[MAX_SOCK_SENDBUF];
 	std::mutex SendLock;

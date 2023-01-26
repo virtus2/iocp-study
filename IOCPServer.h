@@ -94,20 +94,12 @@ public:
 			return false;
 		}
 
-		CreateSenderThread();
-
 		printf("서버 시작\n");
 		return true;
 	}
 	
 	void DestroyThread()
 	{
-		IsSenderRunning = false;
-		if(SenderThread.joinable())
-		{
-			SenderThread.join();
-		}
-
 		IsWorkerRunning = false;
 		CloseHandle(IOCPHandle);
 		for(auto& th : IOWorkerThreads)
@@ -170,14 +162,7 @@ private:
 		printf("AcceptorThread 시작\n");
 		return true;
 	}
-
-	void CreateSenderThread()
-	{
-		IsSenderRunning = true;
-		SenderThread = std::thread([this]() { Sender(); });
-		printf("SenderThread 시작\n");
-	}
-
+	
 	ClientInfo* GetEmptyClientInfo()
 	{
 		for(auto& Client : ClientInfos)
@@ -236,9 +221,8 @@ private:
 			OverlappedEx* ov = (OverlappedEx*)Overlapped;
 			if(IOOperation::RECV == ov->Operation)
 			{
-				Info->BindRecv();
-
 				OnReceive(Info->GetIndex(), IoSize, Info->GetRecvBuffer());
+				Info->BindRecv();
 			}
 			else if(IOOperation::SEND == ov->Operation)
 			{
@@ -282,22 +266,7 @@ private:
 			++ClientCount;
 		}
 	}
-
-	void Sender()
-	{
-		while(IsSenderRunning)
-		{
-			for(auto& Client : ClientInfos)
-			{
-				if(!Client->IsConnected())
-				{
-					continue;
-				}
-				Client->SendIO();
-			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(8));
-		}
-	}
+	
 
 	// 클라이언트 정보
 	std::vector<ClientInfo*> ClientInfos;
@@ -314,9 +283,6 @@ private:
 	// Accept 쓰레드
 	std::thread AcceptorThread;
 
-	// 송신 쓰레드
-	std::thread SenderThread;
-
 	// CompletionPort 객체 핸들
 	HANDLE IOCPHandle = INVALID_HANDLE_VALUE;
 
@@ -325,11 +291,4 @@ private:
 
 	// 접속 쓰레드 동작 플래그
 	bool IsAcceptorRunning = true;
-
-	// 송신 쓰레드 동작 플래그
-	bool IsSenderRunning = true;
-
-	// 소켓 버퍼
-	char SocketBuffer[1024] = { 0, };
-
 };
