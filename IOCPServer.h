@@ -1,5 +1,6 @@
 #pragma once
 #pragma comment(lib, "ws2_32")
+#pragma comment(lib, "mswsock.lib")
 
 #include "ClientInfo.h"
 #include "Define.h"
@@ -17,7 +18,7 @@ public:
 	}
 
 	// 소켓 초기화 함수
-	bool InitSocket()
+	bool InitSocket(const UINT32 IOWorkerThreadCount)
 	{
 		WSADATA WsaData;
 
@@ -35,6 +36,8 @@ public:
 			printf("[에러] WSASocket() 함수 실패: %d\n", WSAGetLastError());
 			return false;
 		}
+		MaxIOWorkerThreadCount = IOWorkerThreadCount;
+
 		printf("소켓 초기화 성공\n");
 		return true;
 	}
@@ -67,6 +70,20 @@ public:
 			return false;
 		}
 
+		IOCPHandle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, MaxIOWorkerThreadCount);
+		if (NULL == IOCPHandle)
+		{
+			printf("[에러] CreateIoCompletionPort() 함수 실패: %d\n", WSAGetLastError());
+			return false;
+		}
+
+		auto hIOCPHandle = CreateIoCompletionPort((HANDLE)ListenSocket, IOCPHandle, (UINT32)0, 0);
+		if (NULL == hIOCPHandle)
+		{
+			printf("[에러] listen socket IOCP bind 실패: %d\n", WSAGetLastError());
+			return false;
+		}
+
 		printf("서버 등록 성공\n");
 		return true;
 	}
@@ -74,14 +91,7 @@ public:
 	bool StartServer(const UINT32 maxClientCount)
 	{
 		CreateClient(maxClientCount);
-
-		IOCPHandle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, MAX_WORKER_THREAD);
-		if(NULL == IOCPHandle)
-		{
-			printf("[에러] CreateIoCompletionPort() 함수 실패: %d\n", WSAGetLastError());
-			return false;
-		}
-
+		
 		bool Ret = CreateWorkerThread();
 		if(false == Ret)
 		{
@@ -136,7 +146,7 @@ private:
 		for(UINT32 i = 0; i<maxClientCount; ++i)
 		{
 			auto Client = new ClientInfo();
-			Client->Init(i);
+			Client->Init(i, IOCPHandle);
 			ClientInfos.push_back(Client);
 		}
 	}
@@ -144,9 +154,8 @@ private:
 	bool CreateWorkerThread()
 	{
 		IsWorkerRunning = true;
-		unsigned int ThreadId = 0;
 
-		for(int i=0; i< MAX_WORKER_THREAD; ++i)
+		for(int i=0; i< MaxIOWorkerThreadCount; ++i)
 		{
 			IOWorkerThreads.emplace_back([this]() { IOWorker(); });
 		}
@@ -212,14 +221,29 @@ private:
 			{
 				continue;
 			}
-			if(FALSE == Success || (0 == IoSize && TRUE == Success))
+
+			OverlappedEx* ov = (OverlappedEx*)Overlapped;
+
+			if(FALSE == Success || (0 == IoSize && IOOperation::ACCEPT != ov->Operation))
 			{
 				CloseSocket(Info);
 				continue;
 			}
 
-			OverlappedEx* ov = (OverlappedEx*)Overlapped;
-			if(IOOperation::RECV == ov->Operation)
+			if(IOOperation::ACCEPT == ov->Operation)
+			{
+				Info = GetClientInfo(ov->SessionIndex);
+				if(Info->AcceptCompletion())
+				{
+					ClientCount++;
+					OnConnect(Info->GetIndex());
+				}
+				else
+				{
+					CloseSocket(Info, true);
+				}
+			}
+			else if(IOOperation::RECV == ov->Operation)
 			{
 				OnReceive(Info->GetIndex(), IoSize, Info->GetRecvBuffer());
 				Info->BindRecv();
@@ -237,36 +261,32 @@ private:
 
 	void Acceptor()
 	{
-		SOCKADDR_IN ClientAddr;
-		int AddrLen = sizeof(SOCKADDR_IN);
-
 		while(IsAcceptorRunning)
 		{
-			ClientInfo* Info = GetEmptyClientInfo();
-			if(NULL == Info)
+			auto currentTimeSec = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+			for(auto client : ClientInfos)
 			{
-				printf("[에러] Client Full\n");
-				return;
+				if(client->IsConnected())
+				{
+					continue;
+				}
+				if((UINT64)currentTimeSec < client->GetLatestClosedTimeSec())
+				{
+					continue;
+				}
+
+				auto diff = currentTimeSec - client->GetLatestClosedTimeSec();
+				if(diff <= RE_USE_SESSION_WAIT_TIMESEC)
+				{
+					continue;
+				}
+				client->PostAccept(ListenSocket, currentTimeSec);
 			}
-
-			auto NewSocket = accept(ListenSocket, (SOCKADDR*)&ClientAddr, &AddrLen);
-			if(INVALID_SOCKET == NewSocket)
-			{
-				continue;
-			}
-
-			if(!Info->OnConnect(IOCPHandle, NewSocket))
-			{
-				Info->Close(true);
-				return;
-			}
-
-			OnConnect(Info->GetIndex());
-
-			++ClientCount;
+			std::this_thread::sleep_for(std::chrono::milliseconds(32));
 		}
 	}
-	
+
+	UINT32 MaxIOWorkerThreadCount = 0;
 
 	// 클라이언트 정보
 	std::vector<ClientInfo*> ClientInfos;

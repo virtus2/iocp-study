@@ -87,6 +87,7 @@ private:
 			return PacketData();
 		}
 		Packet.Set(PacketDataQueue.front());
+		PacketDataQueue.front().Release();
 		PacketDataQueue.pop_front();
 		return Packet;
 	}
