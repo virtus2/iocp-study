@@ -3,6 +3,14 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 
+struct PacketInfo
+{
+	UINT32 ClientIndex = 0;
+	UINT16 PacketId = 0;
+	UINT16 DataSize = 0;
+	char* pDataPtr = nullptr;
+};
+
 // 클라이언트가 보낸 패킷을 저장하는 구조체
 struct PacketData
 {
